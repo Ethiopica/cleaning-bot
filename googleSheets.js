@@ -35,7 +35,7 @@ async function getSchedule() {
 /** Parse DD/MM/YYYY → Date at local midnight, or null */
 function parseSheetDate(value) {
     if (!value || typeof value !== "string") return null;
-    const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const match = value.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
     if (!match) return null;
     const [, day, month, year] = match;
     const date = new Date(Number(year), Number(month) - 1, Number(day));
@@ -70,10 +70,14 @@ const TASK_META = {
     adarash: { emoji: "🏠", label: "አዳራሽ" },
     "bete mekdes": { emoji: "⛪", label: "ቤተ መቅደስ" },
     alchilim: { emoji: "✨", label: "አልጭልም" },
+    toilet: { emoji: "🚻", label: "መጸዳጃ ቤት" },
+    toilets: { emoji: "🚻", label: "መጸዳጃ ቤት" },
+    "adarash + class room": { emoji: "🏠", label: "አዳራሽ + ክፍል" },
+    "adarash + classroom": { emoji: "🏠", label: "አዳራሽ + ክፍል" },
 };
 
 function getTaskMeta(task) {
-    const key = task.trim().toLowerCase();
+    const key = task.trim().toLowerCase().replace(/\s+/g, " ");
     return TASK_META[key] || { emoji: "🧹", label: task.trim() };
 }
 
@@ -97,6 +101,17 @@ function getComingSundays(count, from = new Date()) {
         d.setDate(first.getDate() + i * 7);
         return d;
     });
+}
+
+/** Next date that is actually written in the sheet, on or after today. */
+function getNextSheetDate(byDate, from = new Date()) {
+    const today = startOfDay(from);
+    const upcoming = [...byDate.keys()]
+        .map((key) => parseSheetDate(key))
+        .filter((date) => date && startOfDay(date) >= today)
+        .sort((a, b) => a - b);
+
+    return upcoming[0] || getComingSunday(from);
 }
 
 /**
@@ -185,7 +200,7 @@ function formatDayCard(date, assignments, { showWeekHint = false } = {}) {
 async function getWeeklySchedule() {
     const rows = await getSchedule();
     const byDate = parseAssignments(rows);
-    const sunday = getComingSunday();
+    const sunday = getNextSheetDate(byDate);
     const key = formatSheetDate(sunday);
     const assignments = byDate.get(key) || null;
 

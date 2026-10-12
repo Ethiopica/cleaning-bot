@@ -2,17 +2,25 @@ require("dotenv").config();
 const http = require("http");
 const cron = require("node-cron");
 const { getWeeklySchedule, getMonthlySchedule } = require("./googleSheets");
+const { getSubscribers, subscribe, unsubscribe } = require("./subscribers");
 const { Telegraf } = require("telegraf");
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const TIMEZONE = process.env.TZ || "Africa/Addis_Ababa";
 
+function rememberChat(ctx, next) {
+    if (ctx.chat?.id != null) subscribe(ctx.chat.id);
+    return next();
+}
+
+bot.use(rememberChat);
+
 bot.start((ctx) => {
     ctx.reply(
         "✨ <b>የጽዳት መርሃ ግብር ቦት</b>\n\n" +
             "🧹 /weekly — የሚቀጥለው እሁድ የጽዳት ተረኞች\n" +
-            "🗓 /monthly — የሚቀጥሉት 4 እሁዶች መርሃ ግብር\n" +
-            "🆔 /chatid — የዚህ ቻት መለያ (ለአውቶ ማሳወቂያ)",
+            "🗓 /monthly — የሚቀጥሉት 4 እሁዶች መርሃ ግብር\n\n" +
+            "⏰ በየአርብ ሰዓት 12:00 የሚቀጥለው እሁድ መርሃ ግብር በራስ-ሰር ይላካል።",
         { parse_mode: "HTML" }
     );
 });
@@ -37,18 +45,23 @@ bot.command("monthly", async (ctx) => {
     }
 });
 
-bot.command("chatid", async (ctx) => {
-    await ctx.reply(
-        `የዚህ ቻት መለያ:\n<code>${ctx.chat.id}</code>\n\n` +
-            "ይህን በ Railway ላይ እንደ <code>CHAT_ID</code> አስቀምጡ።",
-        { parse_mode: "HTML" }
-    );
+// Remember groups when the bot is added; forget when removed
+bot.on("my_chat_member", (ctx) => {
+    const status = ctx.myChatMember?.new_chat_member?.status;
+    const chatId = ctx.chat?.id;
+    if (status === "member" || status === "administrator") {
+        subscribe(chatId);
+    } else if (status === "left" || status === "kicked") {
+        unsubscribe(chatId);
+    }
 });
 
 async function sendFridayReminder() {
-    const chatId = process.env.CHAT_ID;
-    if (!chatId) {
-        console.log("⚠️ CHAT_ID is not set — skipping Friday reminder");
+    const chats = getSubscribers();
+    if (!chats.length) {
+        console.log(
+            "⚠️ No subscribed chats yet. Open the bot or group and send /start once."
+        );
         return;
     }
 
@@ -56,10 +69,24 @@ async function sendFridayReminder() {
         const { message } = await getWeeklySchedule();
         const reminder = `🔔 <b>አስታዋሽ</b>\n\n${message}`;
 
-        await bot.telegram.sendMessage(chatId, reminder, {
-            parse_mode: "HTML",
-        });
-        console.log("✅ Friday reminder sent to", chatId);
+        for (const chatId of chats) {
+            try {
+                await bot.telegram.sendMessage(chatId, reminder, {
+                    parse_mode: "HTML",
+                });
+                console.log("✅ Friday reminder sent to", chatId);
+            } catch (error) {
+                console.log("❌ Failed for", chatId, error.message);
+                // Chat deleted / bot removed
+                if (
+                    /blocked|chat not found|bot was kicked|forbidden/i.test(
+                        error.message || ""
+                    )
+                ) {
+                    unsubscribe(chatId);
+                }
+            }
+        }
     } catch (error) {
         console.log("❌ Friday reminder failed:", error);
     }
